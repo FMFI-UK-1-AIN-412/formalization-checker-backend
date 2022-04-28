@@ -1,5 +1,7 @@
 const util = require('util');
 const fs = require('fs')
+const { createHash } = require('crypto')
+const { writeFile } = require('fs/promises')
 const { PATH_TO_VAMPIRE } = require('../config');
 const { getStructure } = require('./parse');
 const { execFile } = require('child_process');
@@ -7,11 +9,20 @@ const { execFile } = require('child_process');
 const execFileWithInput = (file, args, input, callback) =>
     new Promise((resolve, reject) => {
         const child = execFile(file, args,
-            (error, stdout, stderr) =>
-                error ? reject(error) : resolve({stdout, stderr}));
+            (error, stdout, stderr) => {
+                if (error) {
+                    error.stdout = stdout;
+                    error.stderr = stderr;
+                    reject(error);
+                } else {
+                    resolve({stdout, stderr})
+                }
+	    });
         child.stdin.write(input);
         child.stdin.end();
     });
+
+const sha256 = (x) => createHash('sha256').update(x).digest('base64url');
 
 async function evalWithVampire(
     solution, constraintToExer, constraintToProp, formalization, language, exercise, timeLimit = 10
@@ -57,6 +68,7 @@ async function evalWithVampire(
   async function vampire(formalization1, formalization2, timeLimit) {
     try{
         let processInput = toVampireInput(formalization1, "", "", formalization2);
+        console.log(`vampire: ${processInput}`);
         let { stdout, stderr } = await execFileWithInput(`${PATH_TO_VAMPIRE}`, [ '-t', timeLimit ], processInput, '', '' );
         let result = checkVampireResult(stdout);
         if (result === 500) {
@@ -77,10 +89,14 @@ async function evalWithVampire(
   }
   async function vampireStructure(formalization1, formalization2, constraintToExer, constraintToProp, timeLimit, language, exercise) {
       let processInput = toVampireInput(formalization1, constraintToExer, constraintToProp, formalization2);
+      console.log(`vampireStructure:\n${processInput}`);
       try{
           let { stdout, stderr } = await execFileWithInput(`${PATH_TO_VAMPIRE}`,
               [ '-t', timeLimit, '-sa', 'fmb', '-updr', 'off' ], processInput);
 
+          const fname = sha256(processInput);
+          console.log(`Saving output as ${fname}`);
+          await writeFile(sha256(processInput), [processInput,stdout,stderr].join('\n---\n'));
           let result = checkVampireResult(stdout);
           if (result === 500) {
               return {status: setStatus(result), domain: "", predicates: "", m: ""};
@@ -95,6 +111,8 @@ async function evalWithVampire(
           return {status: setStatus(result), domain: "", predicates: "", m: ""};
       }
       catch (err){
+          console.log(`stdout: ${err.stdout}`);
+          console.log(`stderr: ${err.stderr}`);
           if(err.message.substr(0, 15 ) === "Command failed:" && err.code === 1){
               return {status: setStatus("Time"), domain: "", predicates: "", m: ""};
           }
