@@ -8,6 +8,7 @@ const {Variable, Constant, FunctionApplication, PredicateAtom,
     Equivalence, ExistentialQuant, UniversalQuant} = require('./formula_classes');
 
 function getStructure(structure, language, exercise){
+    // console.log(structure);
     structure = structure.split(".");
     let constants = {}
     let symbols = {};
