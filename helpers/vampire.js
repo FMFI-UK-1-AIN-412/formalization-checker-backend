@@ -68,7 +68,7 @@ async function evalWithVampire(
   async function vampire(formalization1, formalization2, timeLimit) {
     try{
         let processInput = toVampireInput(formalization1, "", "", formalization2);
-        console.log(`vampire: ${processInput}`);
+        console.log(`${new Date().toISOString()} vampire: ${processInput}`);
         let { stdout, stderr } = await execFileWithInput(`${PATH_TO_VAMPIRE}`, [ '-t', timeLimit ], processInput, '', '' );
         let result = checkVampireResult(stdout);
         if (result === 500) {
@@ -89,13 +89,13 @@ async function evalWithVampire(
   }
   async function vampireStructure(formalization1, formalization2, constraintToExer, constraintToProp, timeLimit, language, exercise) {
       let processInput = toVampireInput(formalization1, constraintToExer, constraintToProp, formalization2);
-      console.log(`vampireStructure:\n${processInput}`);
+      console.log(`${new Date().toISOString()} vampireStructure:\n${processInput}`);
       try{
           let { stdout, stderr } = await execFileWithInput(`${PATH_TO_VAMPIRE}`,
               [ '-t', timeLimit, '-sa', 'fmb', '-updr', 'off' ], processInput);
 
           const fname = sha256(processInput);
-          console.log(`Saving output as ${fname}`);
+          console.log(`${new Date().toISOString()} Saving output as ${fname}`);
           await writeFile(sha256(processInput), [processInput,stdout,stderr].join('\n---\n'));
           let result = checkVampireResult(stdout);
           if (result === 500) {
@@ -111,8 +111,8 @@ async function evalWithVampire(
           return {status: setStatus(result), domain: "", predicates: "", m: ""};
       }
       catch (err){
-          console.log(`stdout: ${err.stdout}`);
-          console.log(`stderr: ${err.stderr}`);
+          console.log(`${new Date().toISOString()} stdout: ${err.stdout}`);
+          console.log(`${new Date().toISOString()} stderr: ${err.stderr}`);
           if(err.message.substr(0, 15 ) === "Command failed:" && err.code === 1){
               return {status: setStatus("Time"), domain: "", predicates: "", m: ""};
           }
