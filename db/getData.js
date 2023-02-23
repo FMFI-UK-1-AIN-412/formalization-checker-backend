@@ -34,6 +34,7 @@ const getUserId = async (user_login) => {
     return res.rows;
 
   } catch (err) {
+    //console.error('getUserId:', err);
     return null;
   }
 };
