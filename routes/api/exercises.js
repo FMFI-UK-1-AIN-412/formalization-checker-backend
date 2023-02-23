@@ -78,8 +78,11 @@ router.post('/', authenticateJWT, async (req, res) => {
   })
 });
 
-router.get('/', authenticateJWT , async (req, res) => {
+router.get('/', authenticateJWT , async (req, res, next) => {
   await pool.connect(async (err, client, done) => {
+    if (!connectOk(err, req, next)) {
+      return;
+    }
         try {
           client.query('BEGIN TRANSACTION ISOLATION LEVEL READ COMMITTED;', async err => {
             const previews = await getExercisePreviews(client);
@@ -253,8 +256,11 @@ router.post('/edit/remove', authenticateJWT , async (req, res) => {
   })
 });
 
-router.post('/:exercise_id', authenticateJWT, async (req, res) => {
+router.post('/:exercise_id', authenticateJWT, async (req, res, next) => {
   await pool.connect(async (err, client, done) => {
+    if (!connectOk(err, req, next)) {
+      return;
+    }
     try {
       const {exercise_id} = req.params;
       const user_name = req.body.username;
@@ -415,14 +421,15 @@ router.get('/progress/user/:user_name/:exercise_id', authenticateJWT, async (req
   })
 });
 
-router.post('/:exercise_id/:proposition_id', authenticateJWT, async (req, res) => {
+router.post('/:exercise_id/:proposition_id', authenticateJWT, async (req, res, next) => {
   await pool.connect(async (err, client, done) => {
     try {
       let {exercise_id, proposition_id} = req.params;
       let {solution, user} = req.body;
 
-      await client.query('BEGIN TRANSACTION ISOLATION LEVEL SERIALIZABLE;', async err => {
+      await client.query('BEGIN TRANSACTION ISOLATION LEVEL SERIALIZABLE;');
         let user_id = await getUserId(user);
+	console.log('user_id ', user_id);
         user_id = user_id[0].github_id;
         exercise_id = parseInt(exercise_id, 10);
         proposition_id = parseInt(proposition_id, 10);
@@ -491,7 +498,6 @@ router.post('/:exercise_id/:proposition_id', authenticateJWT, async (req, res) =
           })
           res.sendStatus(400);
         }
-      })
     } catch (err) {
       await client.query('ROLLBACK;', err => {
         if (err) {
@@ -529,8 +535,11 @@ router.post('/authentication/logIn/admin',  async (req, res) => {
 
 
 
-router.post('/logIn/github/auth', async (req, res) => {
+router.post('/logIn/github/auth' , async (req, res, next) => {
   await pool.connect(async (err, client, done) => {
+    if (!connectOk(err, req, next)) {
+      return;
+    }
     try {
       const login = (token) => {
         request.get({
@@ -601,6 +610,18 @@ function generateAccessToken(user) {
 function isAdmin(token) {
   let t = JSON.parse(Buffer.from(token.split(" ")[1].split(".")[1], "base64").toString());
   return t.isAdmin;
+}
+
+function handleError(err, msg, req, next) {
+    if (err) {
+      console.error('%s %s: %s', req.method, req.path, msg);
+      next(err);
+      return true;
+    }
+    return false;
+}
+function connectOk(err, req, next) {
+    return !handleError(err, 'Error acquiring client', req, next);
 }
 
 module.exports = router;
