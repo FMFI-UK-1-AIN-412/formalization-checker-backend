@@ -10,11 +10,15 @@ const {Variable, Constant, FunctionApplication, PredicateAtom,
 function getStructure(structure, language, exercise){
     // console.log(structure);
     structure = structure.split(".");
-    let constants = {}
-    let symbols = {};
+
+    let iC = {};
+    let iP = {};
+    let iF = {};
+
     let poc = 1;
 
-    getLanguage(exercise).constants.forEach(key => { constants[key] = poc;
+    const exerciseLanguage = getLanguage(exercise);
+    exerciseLanguage.constants.forEach(key => { iC[key] = poc;
                                                                 poc++;
                                                             });
 
@@ -31,15 +35,15 @@ function getStructure(structure, language, exercise){
 
         if(parsed_formula.name.includes("predicate")){
             if(parsed_formula.formula instanceof Conjunction){
-                poc = parsePredicate(parsed_formula, poc, symbols, constants).poc;
+                poc = parsePredicate(parsed_formula, poc, iP, iC).poc;
             }
             else if(parsed_formula.formula instanceof PredicateAtom){
-                poc = parsePredicate(parsed_formula, poc, symbols, constants).poc;
+                poc = parsePredicate(parsed_formula, poc, iP, iC).poc;
             }
             else{
                 let symbol = language.predicatesToOriginal.get(parsed_formula.name.substr(
                     parsed_formula.name.indexOf("_") + 1 ,parsed_formula.name.length ));
-                symbols[symbol] = [];
+                iP[symbol] = [];
             }
 
         }
@@ -51,7 +55,7 @@ function getStructure(structure, language, exercise){
             else if (parsed_formula.formula instanceof FunctionApplication){
                 functionAplications = parsed_formula.formula.getAll();
             }
-            poc =  parseFunction(parsed_formula, poc, symbols, constants,functionAplications).poc;
+            poc =  parseFunction(parsed_formula, poc, iF, iC,functionAplications).poc;
         }
         if(parsed_formula.name.includes("definition")){
             let constant ;
@@ -67,39 +71,39 @@ function getStructure(structure, language, exercise){
                     constant = [parsed_formula.formula];
                 }
                 for (let i = 0; i < constant.length; i += 2) {
-                    poc = parseEqualityAtom(constant[i], constant[i + 1], constants, poc).poc;
+                    poc = parseEqualityAtom(constant[i], constant[i + 1], iC, poc).poc;
                 }
 
         }
         if(parsed_formula.name.includes("finite_domain")){
             if(parsed_formula.formula instanceof UniversalQuant){
                 if(parsed_formula.formula.type === "i"){
-                    poc = parseUniQuant(parsed_formula, poc, symbols, constants).poc;
+                    poc = parseUniQuant(parsed_formula, poc, iC).poc;
                 }
             }
         }
     }
-    getLanguage(exercise).predicates.forEach((key, value) => {
-        if(symbols[value] === undefined) {
-            symbols[value] = []
+    exerciseLanguage.predicates.forEach((key, value) => {
+        if(iP[value] === undefined) {
+            iP[value] = []
         }
     });
-    getLanguage(exercise).functions.forEach((key, value) => {
-        if(symbols[value] === undefined) {
-            symbols[value] = []
+    exerciseLanguage.functions.forEach((key, value) => {
+        if(iF[value] === undefined) {
+            iF[value] = []
         }
     });
-    for(let [key, value] of Object.entries(symbols)){
-        if(getLanguage(exercise).functions.has(key)){
-            poc = fillFunction(symbols, constants, key, poc).poc;
+    for(let [key, value] of Object.entries(iF)){
+        if(exerciseLanguage.functions.has(key)){
+            const arity = exerciseLanguage.functions.get(key);
+            poc = fillFunction(iF, iC, key, arity, poc).poc;
         }
     }
-    return {constants: constants, symbols: symbols, language:getLanguage(exercise)};
+    return {domain: Object.values(iC), iC: iC, iP: iP, iF: iF, language:exerciseLanguage};
 
 }
 
-
-function parseFunction(parsed_formula, poc, symbols, constants, functionApplications){
+function parseFunction(parsed_formula, poc, iF, iC, functionApplications){
     for(let i = 0; i < functionApplications.length; i++){
         let args = functionApplications[i].getArgs();
         let constant = [];
@@ -108,104 +112,115 @@ function parseFunction(parsed_formula, poc, symbols, constants, functionApplicat
                 args[j] = [args[j]];
             }
             for(let m = 0; m < args[j].length; m++ ){
-                poc = parseConstants(args[j][m], constants, poc).poc;
-                if(args[j][m].getOriginalSymbol() === undefined){
-                    constant.push(constants[args[j][m].toVampire()]);
+                poc = parseConstants(args[j][m], iC, poc).poc;
+                if(args[j][m].toHuman() === undefined){
+                    constant.push(iC[args[j][m].toVampire()]);
                 }
                 else {
-                    constant.push(constants[args[j][m].getOriginalSymbol()]);
+                    constant.push(iC[args[j][m].toHuman()]);
                 }
             }
         }
-        if(symbols[functionApplications[i].getSymbol()] !== undefined){
-            symbols[functionApplications[i].getSymbol()].push( constant);
+        if(iF[functionApplications[i].toHuman()] !== undefined){
+            iF[functionApplications[i].toHuman()].push(constant);
         }
         else{
-            symbols[functionApplications[i].getSymbol()] = [constant];
+            iF[functionApplications[i].toHuman()] = [constant];
         }
 
     }
-    return{symbols: symbols, constants: constants, poc: poc};
+    return{iF: iF, iC: iC, poc: poc};
 }
 
-function parsePredicate(parsed_formula, poc, symbols, constants){
+function parsePredicate(parsed_formula, poc, iP, iC){
     let res = parsed_formula.formula.getAll();
     for(let i = 0; i < res.length; i++){
         let args = res[i].getArgs();
         let constant = [];
         for(let j = 0; j < args.length; j++) {
-            poc = parseConstants(args[j], constants, poc).poc;
-            if(args[j].getOriginalSymbol() === undefined){
-                constant.push(constants[args[j].toVampire()]);
+            poc = parseConstants(args[j], iC, poc).poc;
+            if(args[j].toHuman() === undefined){
+                constant.push(iC[args[j].toVampire()]);
             }
             else {
-                constant.push(constants[args[j].getOriginalSymbol()]);
+                constant.push(iC[args[j].toHuman()]);
             }
         }
-        if(symbols[res[i].getSymbol()] !== undefined){
-            symbols[res[i].getSymbol()].push( constant);
+        if(iP[res[i].toHuman()] !== undefined){
+            iP[res[i].toHuman()].push(constant);
         }
         else{
-            symbols[res[i].getSymbol()] = [constant];
+            iP[res[i].toHuman()] = [constant];
         }
     }
-    return{symbols: symbols, constants: constants, poc: poc};
+    return{iP: iP, iC: iC, poc: poc};
 }
 
-function parseUniQuant(parsed_formula, poc, predicates, constants){
+function parseUniQuant(parsed_formula, poc, iC){
     let domain = parsed_formula.formula.subf.getAll();
     for(let i = 0; i < domain.length; i++){
        if(domain[i].vampireSymbol === "X"){
            continue;
        }
-       poc = parseConstants(domain[i], constants, poc).poc;
+       poc = parseConstants(domain[i], iC, poc).poc;
     }
-    return{ constants: constants, poc: poc};
+    return{ iC: iC, poc: poc};
 }
 
-function parseConstants(constant, constants, poc){
-    if(constant.getOriginalSymbol() === ''){
-        return { constants: constants, poc: poc};
+function parseConstants(constant, iC, poc){
+    if(constant.toHuman() === ''){
+        return { iC: iC, poc: poc};
     }
-    for(const key in constants){
-        if(key === constant.getOriginalSymbol() || key === constant.toVampire()){
-            return { constants: constants, poc: poc};
+    for(const key in iC){
+        if(key === constant.toHuman() || key === constant.toVampire()){
+            return { iC: iC, poc: poc};
         }
     }
-    if(constant.getOriginalSymbol() === undefined){
-        constants[constant.toVampire()] = poc;
+    if(constant.toHuman() === undefined){
+        iC[constant.toVampire()] = poc;
     }
     else {
-        constants[constant.getOriginalSymbol()] = poc;
+        iC[constant.toHuman()] = poc;
     }
     poc++;
-    return{ constants: constants, poc: poc};
+    return{ iC: iC, poc: poc};
 }
 
-function parseEqualityAtom(constant1, constant2, constants, poc){
-    if(constants[constant2] !== constants[constant1]){
-        if(constants[constant2] < constants[constant1]){
-            constants[constant1] = constants[constant2];
+function parseEqualityAtom(constant1, constant2, iC, poc){
+    if(iC[constant2] !== iC[constant1]){
+        if(iC[constant2] < iC[constant1]){
+            iC[constant1] = iC[constant2];
         }
         else{
-            constants[constant2] = constants[constant1];
+            iC[constant2] = iC[constant1];
         }
     }
-    return{ constants: constants, poc: poc};
+    return{ iC: iC, poc: poc};
 }
 
-function fillFunction(symbols, constants, fun, poc) {
-    let was = []
-    for (let value of symbols[fun]) {
-        was.push(value[0])
+function fillFunction(iF, iC, fun, arity, poc) {
+    let was = new Set(iF[fun].map(entry => JSON.stringify(entry.slice(0, -1))));
+
+    function generateTuples(arr, arity, prefix = []) {
+        if (arity === 0) return [prefix];
+        let result = [];
+        for (let i = 0; i < arr.length; i++) {
+            result = result.concat(generateTuples(arr, arity - 1, [...prefix, arr[i]]));
+        }
+        return result;
     }
-    for (let key in constants) {
-        if (!(was.includes(constants[key]))){
-            was.push(constants[key]);
-            symbols[fun].push([constants[key], chance.integer({min: 1, max: poc - 1})]);
+
+    const constantValues = Object.values(iC);
+    const allPossibleTuples = generateTuples(constantValues, arity);
+
+    for (let tuple of allPossibleTuples) {
+        const key = JSON.stringify(tuple);
+        if (!was.has(key)) {
+            was.add(key);
+            iF[fun].push([...tuple, chance.integer({ min: 1, max: poc - 1 })]);
         }
     }
-    return {constants: constants, poc: poc, symbols: symbols};
+    return {iC: iC, poc: poc, iF: iF};
 }
 
 

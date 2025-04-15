@@ -5,6 +5,8 @@ const { writeFile } = require('fs/promises')
 const { PATH_TO_VAMPIRE } = require('../config');
 const { getStructure } = require('./parse');
 const { execFile } = require('child_process');
+const checkImplicationTimeout = 10;
+const findStructureTimeout = 10;
 
 const execFileWithInput = (file, args, input, callback) =>
     new Promise((resolve, reject) => {
@@ -24,52 +26,30 @@ const execFileWithInput = (file, args, input, callback) =>
 
 const sha256 = (x) => createHash('sha256').update(x).digest('base64url');
 
-async function evalWithVampire(
-    solution, constraintToExer, constraintToProp, formalization, language, exercise, timeLimit = 10
+async function findStructure(
+    solution, constraintToExer, constraintToProp, formalization, language, exercise, timeLimit = findStructureTimeout
 ) {
-    let eval_status = {
-        solutionToFormalization: '',
-        m1: '',
-        m2: '',
-        formalizationToSolution: '',
-        domainSolutionToFormalization: '',
-        symbolsSolutionToFormalization: '',
-        domainFormalizationToSolution: '',
-        symbolsFormalizationToSolution: '',
-        languageContants: ''
+    let vampireOutput = await callVampireConstraints(formalization, solution, constraintToExer, constraintToProp, timeLimit, language, exercise);
+
+    if (!vampireOutput.domain) return { error: vampireOutput.status };
+
+    const structure = {
+        domain: vampireOutput.domain,
+        iC: vampireOutput.iC,
+        iP: vampireOutput.iP,
+        iF: vampireOutput.iF,
+        languageConstants: vampireOutput.language ? new Set(vampireOutput.language.constants) : new Set(),
+        structureConstants: Object.keys(vampireOutput.iC)
     };
-    eval_status.solutionToFormalization = await vampire(solution, formalization, timeLimit);
-    eval_status.formalizationToSolution = await vampire(formalization, solution, timeLimit);
-    if (eval_status.formalizationToSolution === "OK" && eval_status.solutionToFormalization === "OK") {
-        return eval_status;
-    } else {
-        let notFound = ' sa nepodarilo nájsť automaticky. Ak neviete nájsť chybu, poraďte sa s vyučujúcimi.';
-        let structureSolutionToFormalization = ', v ktorej je vaša formalizácia pravdivá, ale hľadaná správna formalizácia je nepravdivá'
-        let structureFormalizationToSolution = ', v ktorej je vaša formalizácia nepravdivá, ale hľadaná správna formalizácia je pravdivá'
 
-        let vampireOutput = await callVampireConstraints(formalization, solution, constraintToExer, constraintToProp, timeLimit, language, exercise);
-        eval_status.domainFormalizationToSolution = vampireOutput.constants !== undefined ? vampireOutput.constants : '';
-        eval_status.symbolsFormalizationToSolution = vampireOutput.symbols !== undefined ? vampireOutput.symbols : '' ;
-        eval_status.m1 =  vampireOutput.m !== '' ? "Štruktúra " + vampireOutput.m + structureFormalizationToSolution + ":"
-                            : "Štruktúru" + vampireOutput.m  + structureFormalizationToSolution + ","  + notFound;
-        eval_status.languageContants = vampireOutput.language === undefined ?
-            [] : Array.from(vampireOutput.language.constants) ;
-
-        vampireOutput = await callVampireConstraints(solution, formalization, constraintToExer, constraintToProp, timeLimit, language, exercise)
-        eval_status.domainSolutionToFormalization = vampireOutput.constants !== undefined ? vampireOutput.constants : '';
-        eval_status.m2 = vampireOutput.m !== '' ? "Štruktúra " + vampireOutput.m + structureSolutionToFormalization + ":"
-            : "Štruktúra"+ vampireOutput.m  + structureSolutionToFormalization + ","  + notFound ;
-        eval_status.symbolsSolutionToFormalization = vampireOutput.symbols !== undefined ? vampireOutput.symbols : '';
-
-        return eval_status;
-    }
+    return structure;
 }
 
-  async function vampire(formalization1, formalization2, timeLimit) {
-    try{
+async function checkImplication(formalization1, formalization2, timeLimit = checkImplicationTimeout) {
+    try {
         let processInput = toVampireInput(formalization1, "", "", formalization2);
         console.log(`${new Date().toISOString()} vampire: ${processInput}`);
-        let { stdout, stderr } = await execFileWithInput(`${PATH_TO_VAMPIRE}`, [ '-t', timeLimit ], processInput, '', '' );
+        let { stdout, stderr } = await execFileWithInput(`${PATH_TO_VAMPIRE}`, ['-t', timeLimit], processInput, '', '');
         let result = checkVampireResult(stdout);
         if (result === 500) {
             return setStatus(result);
@@ -78,64 +58,83 @@ async function evalWithVampire(
         result = result[1];
         return setStatus(result);
     }
-    catch (err){
-        if(err.message.substr(0, 15 ) === "Command failed:" && err.code === 1){
+    catch (err) {
+        if (err.message.substr(0, 15) === "Command failed:" && err.code === 1) {
             return setStatus("Time");
         }
         console.error(`Unknown evaluation result: ${err}\n${err.stack}`);
         return setStatus(`failed`);
     }
+}
 
-  }
-  async function vampireStructure(formalization1, formalization2, constraintToExer, constraintToProp, timeLimit, language, exercise) {
-      let processInput = toVampireInput(formalization1, constraintToExer, constraintToProp, formalization2);
-      console.log(`${new Date().toISOString()} vampireStructure:\n${processInput}`);
-      try{
-          let { stdout, stderr } = await execFileWithInput(`${PATH_TO_VAMPIRE}`,
-              [ '-t', timeLimit, '-sa', 'fmb', '-updr', 'off' ], processInput);
+const implicationStatusIsTrue = (implicationStatus) => (
+    implicationStatus.result === "OK"
+);
 
-          const fname = sha256(processInput);
-          console.log(`${new Date().toISOString()} Saving output as ${fname}`);
-          await writeFile(sha256(processInput), [processInput,stdout,stderr].join('\n---\n'));
-          let result = checkVampireResult(stdout);
-          if (result === 500) {
-              return {status: setStatus(result), domain: "", predicates: "", m: ""};
-          }
-          result = result[1];
-          if (stdout.includes("Finite Model Found!")) {
-              let structure = stdout.slice(stdout.indexOf("tff"), stdout.length);
-              structure = structure.slice(0, structure.indexOf("% SZS"));
-              structure = getStructure(structure, language, exercise);
-              return {status: setStatus(result), constants: structure.constants, symbols: structure.symbols, m:"𝓜 = (𝐷, 𝑖)", language: structure.language};
-          }
-          return {status: setStatus(result), domain: "", predicates: "", m: ""};
-      }
-      catch (err){
-          console.log(`${new Date().toISOString()} stdout: ${err.stdout}`);
-          console.log(`${new Date().toISOString()} stderr: ${err.stderr}`);
-          if(err.message.substr(0, 15 ) === "Command failed:" && err.code === 1){
-              return {status: setStatus("Time"), domain: "", predicates: "", m: ""};
-          }
-          console.error(`Unknown evaluation result: ${err}\n${err.stack}`);
-          return {status: setStatus(`failed`), domain: "", predicates: "", m: ""};
-      }
+const statusIsEquivalent = (eval_status) => (
+    implicationStatusIsTrue(eval_status.correctImpliesInput) &&
+    implicationStatusIsTrue(eval_status.inputImpliesCorrect)
+);
 
-  }
+const checkEquivalence = async (solution, formalization) => ({
+    inputImpliesCorrect: {
+        result: await checkImplication(solution, formalization)
+    },
+    correctImpliesInput: {
+        result: await checkImplication(formalization, solution)
+    }
+});
 
-  async function callVampireConstraints(formalization1, formalization2, constraintToExer, constraintToProp, timeLimit, language, exercise){
-       let vampireOutput = await vampireStructure(formalization1, formalization2, constraintToExer, constraintToProp, timeLimit, language, exercise);
-       if(vampireOutput.m === ""){
-          vampireOutput = await vampireStructure(formalization1, formalization2, "", constraintToProp, timeLimit, language, exercise);
-           if(vampireOutput.m === ""){
-               vampireOutput = await vampireStructure(formalization1, formalization2, constraintToExer, "", timeLimit, language, exercise);
-               if(vampireOutput.m === ""){
-                   vampireOutput = await vampireStructure(formalization1, formalization2, "", "", timeLimit, language, exercise);
-               }
-           }
-       }
-      return vampireOutput;
+async function vampireStructure(formalization1, formalization2, constraintToExer, constraintToProp, timeLimit, language, exercise) {
+    let processInput = toVampireInput(formalization1, constraintToExer, constraintToProp, formalization2);
+    console.log(`${new Date().toISOString()} vampireStructure:\n${processInput}`);
+    try {
+        let { stdout, stderr } = await execFileWithInput(`${PATH_TO_VAMPIRE}`,
+            ['-t', timeLimit, '-sa', 'fmb', '-updr', 'off'], processInput);
 
-  }
+        const fname = sha256(processInput);
+        console.log(`${new Date().toISOString()} Saving output as ${fname}`);
+        await writeFile(sha256(processInput), [processInput,stdout,stderr].join('\n---\n'));
+
+        let result = checkVampireResult(stdout);
+        if (result === 500) {
+            return { status: setStatus(result) };
+        }
+        result = result[1];
+        if (stdout.includes("Finite Model Found!")) {
+            let structure = stdout.slice(stdout.indexOf("tff"), stdout.length);
+            structure = structure.slice(0, structure.indexOf("% SZS"));
+            structure = getStructure(structure, language, exercise);
+            return { status: setStatus(result),
+                 domain: structure.domain, iC: structure.iC, iP: structure.iP, iF: structure.iF, language: structure.language };
+        }
+        return { status: setStatus(result) };
+    }
+    catch (err) {
+        console.log(`${new Date().toISOString()} stdout: ${err.stdout}`);
+        console.log(`${new Date().toISOString()} stderr: ${err.stderr}`);
+        if (err.message.substr(0, 15) === "Command failed:" && err.code === 1) {
+            return { status: setStatus("Time") };
+        }
+        console.error(`Unknown evaluation result: ${err}\n${err.stack}`);
+        return { status: setStatus(`failed`) };
+    }
+}
+
+async function callVampireConstraints(formalization1, formalization2, constraintToExer, constraintToProp, timeLimit, language, exercise) {
+    let vampireOutput = await vampireStructure(formalization1, formalization2, constraintToExer, constraintToProp, timeLimit, language, exercise);
+    if (!vampireOutput.domain) {
+        vampireOutput = await vampireStructure(formalization1, formalization2, "", constraintToProp, timeLimit, language, exercise);
+        if (!vampireOutput.domain) {
+            vampireOutput = await vampireStructure(formalization1, formalization2, constraintToExer, "", timeLimit, language, exercise);
+            if (!vampireOutput.domain) {
+                vampireOutput = await vampireStructure(formalization1, formalization2, "", "", timeLimit, language, exercise);
+            }
+        }
+    }
+    return vampireOutput;
+
+}
 
 const toVampireInput = (lhs, constr1, constr2, rhs) => {
     let input = `fof(a,axiom,${lhs}). fof(b,conjecture,${rhs}).`
@@ -174,6 +173,9 @@ function setStatus(result) {
     }
 }
 module.exports = {
-    vampire,
-    evalWithVampire
+    implicationStatusIsTrue,
+    statusIsEquivalent,
+    checkEquivalence,
+    checkImplication,
+    findStructure
 };
