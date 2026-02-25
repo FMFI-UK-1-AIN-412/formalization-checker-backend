@@ -3,6 +3,7 @@ const {_getUserId} = require("./users");
 const evaluate = require('../helpers/evaluate');
 const evaluateBadFormalization = require('../helpers/badFormalization');
 const {LanguageToVampire} = require("../helpers/language");
+const {statusIsEquivalent} = require('../helpers/vampire');
 
 function UserException(message) {
     this.message = message;
@@ -44,7 +45,6 @@ const _getExerciseByID = async (exercise_id, user_name, client) => {
 
     let exercise = res.rows[0];
     exercise.propositions = propositions;
-
     return exercise;
 };
 
@@ -420,16 +420,16 @@ const _getStudentsToBadFormalization = async (bad_formalization_id, client) => {
 };
 
 const saveExercise = async (
-    {title, description, constants, predicates, functions, propositions, constraint}) => {
+    {title, description, constants, predicates, functions, propositions, constraint, parserType}) => {
     const client = await pool.connect();
     try {
         await client.query('BEGIN TRANSACTION ISOLATION LEVEL READ COMMITTED')
         const queryText =
-            `INSERT INTO exercises(title, description, constants, predicates, functions, constraints)
-             VALUES ($1, $2, $3, $4, $5, $6)
+            `INSERT INTO exercises(title, description, constants, predicates, functions, constraints, "parserType")
+             VALUES ($1, $2, $3, $4, $5, $6, $7)
              RETURNING exercise_id;`
 
-        const res = await client.query(queryText, [title, description, constants, predicates, functions, constraint]);
+        const res = await client.query(queryText, [title, description, constants, predicates, functions, constraint, parserType]);
         const exerciseID = res.rows[0].exercise_id;
         propositions.forEach(p => {
             _saveProposition(exerciseID, p, client);
@@ -500,13 +500,14 @@ const updateExercise = async (exercise) => {
                  constants = $4,
                  predicates = $5,
                  functions = $6,
-                 constraints = $7
+                 constraints = $7,
+                 "parserType" = $8
              WHERE exercise_id = $1;`
 
         await client.query(
             queryText,
             [exercise.id, exercise.title, exercise.description, exercise.constants,
-                exercise.predicates, exercise.functions, exercise.constraint]
+                exercise.predicates, exercise.functions, exercise.constraint, exercise.parserType]
         );
 
         await _removeProposition(exercise.id, client);
@@ -599,8 +600,7 @@ const findEquivalentSolutions = async (proposition_id, exercise_id, solution, cl
     }
 
     const eval_status = await evaluate(solution, formalizations, exercise, migration);
-    const isCorrectSolution = (eval_status.solutionToFormalization === 'OK' &&
-        eval_status.formalizationToSolution === 'OK')
+    const isCorrectSolution = (statusIsEquivalent(eval_status));
 
     let bad_formalization_id = null;
     if (!isCorrectSolution) {
